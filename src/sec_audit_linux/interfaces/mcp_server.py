@@ -8,7 +8,9 @@ from sec_audit_linux.core.engine import AuditEngine
 from sec_audit_linux.core.os_detector import OSDetector
 from sec_audit_linux.collectors import get_default_collectors
 from sec_audit_linux.frameworks import get_default_frameworks
+from sec_audit_linux.integrations import get_default_adapters
 from sec_audit_linux.reporters.remediation_gen import RemediationGenerator
+from sec_audit_linux.reporters.tool_reporter import ToolReporter
 
 
 class MCPServer:
@@ -18,6 +20,8 @@ class MCPServer:
         self.engine = AuditEngine()
         for c in get_default_collectors():
             self.engine.register_collector(c)
+        for a in get_default_adapters():
+            self.engine.register_tool_adapter(a)
         for fw in get_default_frameworks():
             self.engine.register_framework(fw)
 
@@ -41,8 +45,16 @@ class MCPServer:
                 }
             },
             {
+                "name": "list_integrated_security_tools",
+                "description": "Lists all open-source security tools (Lynis, Checksec, Docker-Bench, Kube-Bench, Trivy, Grype, Syft, RKHunter, osquery, OpenSCAP, AIDE).",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {}
+                }
+            },
+            {
                 "name": "run_security_audit",
-                "description": "Executes technical security audit and calculates compliance adherence percentages.",
+                "description": "Executes technical security audit, runs open-source tools, and calculates compliance adherence percentages.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -55,8 +67,27 @@ class MCPServer:
                             "type": "array",
                             "items": {"type": "string"},
                             "description": "Optional list of components/collectors to audit (e.g. ['ssh', 'identity', 'system'])"
+                        },
+                        "tools": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional list of open-source tools to run (e.g. ['lynis', 'checksec', 'docker_bench', 'trivy'])"
                         }
                     }
+                }
+            },
+            {
+                "name": "get_individual_tool_report",
+                "description": "Retrieves the standalone deep-analysis report and metrics for a specific open-source security tool.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "tool_name": {
+                            "type": "string",
+                            "description": "Name of the tool (e.g. 'lynis', 'checksec', 'docker_bench', 'trivy', 'rkhunter', 'syft')"
+                        }
+                    },
+                    "required": ["tool_name"]
                 }
             },
             {
@@ -109,20 +140,44 @@ class MCPServer:
                 ]
             }
 
+        elif tool_name == "list_integrated_security_tools":
+            adapters = get_default_adapters()
+            return {
+                "tools": [
+                    {
+                        "tool_name": a.tool_name,
+                        "category": a.tool_category,
+                        "license": a.license,
+                        "installed": a.is_available(),
+                        "description": a.description
+                    }
+                    for a in adapters
+                ]
+            }
+
         elif tool_name == "run_security_audit":
             fw_list = arguments.get("frameworks")
             comp_list = arguments.get("components")
+            tool_list = arguments.get("tools")
             result = self.engine.run_assessment(
                 framework_ids=fw_list,
-                collector_names=comp_list
+                collector_names=comp_list,
+                tool_names=tool_list
             )
             return result.to_dict()
+
+        elif tool_name == "get_individual_tool_report":
+            t_name = arguments.get("tool_name", "")
+            result = self.engine.run_assessment(tool_names=[t_name], run_tools=True)
+            tool_rep = result.tools_reports.get(t_name)
+            if not tool_rep:
+                return {"error": f"Tool report not found for {t_name}"}
+            return tool_rep.to_dict()
 
         elif tool_name == "inspect_evidence":
             target_item = arguments.get("target_item", "")
             records = self.engine.evidence_store.get_by_target(target_item)
             if not records:
-                # Run collection on the fly if not cached
                 self.engine.run_assessment()
                 records = self.engine.evidence_store.get_by_target(target_item)
             return {

@@ -1,7 +1,7 @@
 """Markdown Report Generator for Executive and Technical Audiences."""
 
 from typing import Dict, Any, List
-from sec_audit_linux.core.models import AssessmentResult, FrameworkResult, ControlEvaluation, ControlStatus, Severity
+from sec_audit_linux.core.models import AssessmentResult, FrameworkResult, ControlEvaluation, ControlStatus, Severity, ToolReport
 
 
 class MarkdownReporter:
@@ -16,7 +16,7 @@ class MarkdownReporter:
 
     @staticmethod
     def generate_executive_report(result: AssessmentResult) -> str:
-        """Generates high-level executive report with posture KPI and critical risks."""
+        """Generates high-level executive report with posture KPI, tool summaries, and critical risks."""
         ctx = result.system_context
         lines = []
 
@@ -56,7 +56,19 @@ class MarkdownReporter:
             )
         lines.append("")
 
-        # 3. Top Critical and High Non-Compliant Findings
+        # 3. Integrated Open-Source Security Tools Summary
+        if result.tools_reports:
+            lines.append("## 🛠️ Integrated Open-Source Security Tools Status")
+            lines.append("")
+            lines.append("| Tool | Category | License | Status | Key Metrics |")
+            lines.append("| :--- | :--- | :--- | :--- | :--- |")
+            for t_name, t_rep in result.tools_reports.items():
+                metrics_summary = ", ".join(f"{k}: {v}" for k, v in list(t_rep.summary_metrics.items())[:3])
+                status_badge = "✅ Installed" if t_rep.is_installed else "ℹ️ Evaluated"
+                lines.append(f"| **{t_rep.tool_name.upper()}** | {t_rep.tool_category} | `{t_rep.license}` | {status_badge} | `{metrics_summary or 'N/A'}` |")
+            lines.append("")
+
+        # 4. Top Critical and High Non-Compliant Findings
         lines.append("## 🚨 Critical & High Priority Non-Compliant Findings")
         lines.append("")
         
@@ -69,7 +81,7 @@ class MarkdownReporter:
         if critical_findings:
             lines.append("| Framework | Control ID | Title | Severity | Actual Value | Suggested Remediation |")
             lines.append("| :--- | :--- | :--- | :--- | :--- | :--- |")
-            for f in critical_findings[:15]:  # Limit top 15 in executive
+            for f in critical_findings[:15]:
                 cmd_snip = f"`{f.remediation_cmd}`" if f.remediation_cmd else "_Review manually_"
                 lines.append(
                     f"| {f.framework_name} | `{f.control_id}` | {f.title} | **{f.severity.value}** | `{f.actual_condition}` | {cmd_snip} |"
@@ -84,7 +96,7 @@ class MarkdownReporter:
 
     @staticmethod
     def generate_technical_report(result: AssessmentResult) -> str:
-        """Generates in-depth technical report with complete evidence and remediation guides."""
+        """Generates in-depth technical report with complete evidence, tool findings, and remediation guides."""
         lines = []
         lines.append("# 📋 Technical Security Audit & Hardening Report")
         lines.append("")
@@ -92,6 +104,7 @@ class MarkdownReporter:
                      f"**Overall Score:** `{result.overall_score}%` | **Evidences:** `{result.total_evidences}`")
         lines.append("")
 
+        # 1. Framework breakdown
         for fw_id, fw in result.frameworks.items():
             lines.append(f"## 🛡️ {fw.framework_name} ({fw.version})")
             lines.append(f"- **Adherence:** `{fw.adherence_percentage:.2f}%`")
@@ -116,6 +129,20 @@ class MarkdownReporter:
                 if e.remediation_cmd:
                     lines.append(f"- **Remediation Command:**\n```bash\n{e.remediation_cmd}\n```")
                 
+                lines.append("")
+
+        # 2. Open-source tools breakdown
+        if result.tools_reports:
+            lines.append("## 🛠️ Open-Source Security Tools In-Depth Findings")
+            lines.append("")
+            for t_name, t_rep in result.tools_reports.items():
+                lines.append(f"### 📦 {t_rep.tool_name.upper()} ({t_rep.tool_category})")
+                lines.append(f"- **License:** `{t_rep.license}` | **Installed:** `{t_rep.is_installed}` | **Execution Time:** `{t_rep.execution_time_seconds}s`")
+                lines.append("- **Metrics:** " + ", ".join(f"`{k}: {v}`" for k, v in t_rep.summary_metrics.items()))
+                if t_rep.recommendations:
+                    lines.append("- **Key Recommendations:**")
+                    for rec in t_rep.recommendations[:5]:
+                        lines.append(f"  - {rec}")
                 lines.append("")
 
         return "\n".join(lines)

@@ -1,36 +1,57 @@
 """AIDE (Advanced Intrusion Detection Environment) Integration Adapter."""
 
-from typing import List
+import os
+import time
+from typing import List, Dict, Any
 from sec_audit_linux.integrations.base_adapter import BaseToolAdapter
-from sec_audit_linux.core.models import EvidenceRecord, SystemContext
-from sec_audit_linux.core.utils import execute_command
+from sec_audit_linux.core.models import (
+    EvidenceRecord,
+    SystemContext,
+    ToolReport,
+    ToolExecutionStatus
+)
+from sec_audit_linux.core.utils import execute_command, check_command_available
 
 
 class AIDEAdapter(BaseToolAdapter):
-    """Integrates AIDE integrity scanner."""
+    """Integrates AIDE file integrity scanner."""
 
     tool_name = "aide_adapter"
+    tool_category = "File Integrity Monitoring (FIM)"
     binary_name = "aide"
-    description = "AIDE File Integrity Checker"
+    license = "GPL-2.0 (Open Source / Free for Corporate Use)"
+    description = "AIDE Advanced Intrusion Detection Environment"
 
-    def run(self, context: SystemContext) -> List[EvidenceRecord]:
-        if not self.is_available():
-            return [EvidenceRecord(
-                collector_name=self.tool_name,
-                target_item="aide_tool_status",
-                raw_output="AIDE binary is not available on PATH.",
-                parsed_data={"installed": False}
-            )]
+    def audit(self, context: SystemContext) -> ToolReport:
+        start_time = time.time()
+        is_installed = self.is_available()
 
-        out, err, code = execute_command(["aide", "--check"], timeout=30)
-        return [EvidenceRecord(
-            collector_name=self.tool_name,
-            target_item="aide_check_run",
-            command_executed="aide --check",
-            raw_output=out or err,
-            parsed_data={
-                "installed": True,
+        if not is_installed:
+            return ToolReport(
+                tool_name=self.tool_name,
+                tool_category=self.tool_category,
+                license=self.license,
+                is_installed=False,
+                status=ToolExecutionStatus.NOT_INSTALLED,
+                execution_time_seconds=round(time.time() - start_time, 3),
+                summary_metrics={"status": "aide_not_installed"},
+                recommendations=["Install aide ('apt install aide' or 'dnf install aide') and run aideinit to establish baseline hashes."]
+            )
+
+        out, err, code = execute_command(["aide", "--check"], timeout=45)
+        return ToolReport(
+            tool_name=self.tool_name,
+            tool_category=self.tool_category,
+            license=self.license,
+            is_installed=True,
+            version=self.get_version(),
+            status=ToolExecutionStatus.SUCCESS if code in [0, 4] else ToolExecutionStatus.FAILED,
+            execution_time_seconds=round(time.time() - start_time, 3),
+            summary_metrics={
                 "exit_code": code,
-                "clean_baseline": code == 0
-            }
-        )]
+                "clean_baseline": code == 0,
+                "changes_detected": code != 0
+            },
+            findings=[{"raw_check_summary": out[:1000]}],
+            recommendations=["Review modified files in AIDE log if baseline changes are reported."]
+        )

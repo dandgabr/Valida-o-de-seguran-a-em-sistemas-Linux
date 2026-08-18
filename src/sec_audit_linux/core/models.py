@@ -37,6 +37,15 @@ class OSFamily(str, Enum):
     UNKNOWN = "unknown"
 
 
+class ToolExecutionStatus(str, Enum):
+    """Execution status of an integrated security tool."""
+    INSTALLED = "installed"
+    NOT_INSTALLED = "not_installed"
+    SUCCESS = "success"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
 @dataclass
 class SystemContext:
     """Metadata representing the audited target host and environment."""
@@ -102,6 +111,28 @@ class ControlEvaluation:
 
 
 @dataclass
+class ToolReport:
+    """Individual deep analysis report produced by an integrated open-source security tool."""
+    tool_name: str
+    tool_category: str
+    license: str
+    is_installed: bool
+    version: str = "unknown"
+    status: ToolExecutionStatus = ToolExecutionStatus.INSTALLED
+    execution_time_seconds: float = 0.0
+    summary_metrics: Dict[str, Any] = field(default_factory=dict)
+    findings: List[Dict[str, Any]] = field(default_factory=list)
+    recommendations: List[str] = field(default_factory=list)
+    raw_output: str = ""
+    generated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    def to_dict(self) -> Dict[str, Any]:
+        data = asdict(self)
+        data["status"] = self.status.value
+        return data
+
+
+@dataclass
 class FrameworkResult:
     """Consolidated assessment outcome for a specific regulatory/security framework."""
     framework_id: str
@@ -126,11 +157,12 @@ class FrameworkResult:
 
 @dataclass
 class AssessmentResult:
-    """Top-level assessment result containing all framework results and context."""
+    """Top-level assessment result containing framework results, tool reports, and context."""
     assessment_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     system_context: Optional[SystemContext] = None
     overall_score: float = 0.0
     frameworks: Dict[str, FrameworkResult] = field(default_factory=dict)
+    tools_reports: Dict[str, ToolReport] = field(default_factory=dict)
     total_evidences: int = 0
     started_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     completed_at: Optional[str] = None
@@ -142,6 +174,7 @@ class AssessmentResult:
             "system_context": self.system_context.to_dict() if self.system_context else None,
             "overall_score": self.overall_score,
             "frameworks": {k: v.to_dict() for k, v in self.frameworks.items()},
+            "tools_reports": {k: v.to_dict() for k, v in self.tools_reports.items()},
             "total_evidences": self.total_evidences,
             "started_at": self.started_at,
             "completed_at": self.completed_at,

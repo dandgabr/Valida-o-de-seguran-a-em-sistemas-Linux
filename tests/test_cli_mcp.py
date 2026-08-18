@@ -1,4 +1,4 @@
-"""Tests for CLI subcommands and MCP server interaction."""
+"""Tests for CLI subcommands, MCP server interaction, and open-source tool audits."""
 
 import json
 import os
@@ -8,7 +8,15 @@ import argparse
 from pathlib import Path
 
 from sec_audit_linux.interfaces.mcp_server import MCPServer
-from sec_audit_linux.interfaces.cli import cmd_system_info, cmd_list_frameworks, cmd_list_components, cmd_audit
+from sec_audit_linux.interfaces.cli import (
+    cmd_system_info,
+    cmd_list_frameworks,
+    cmd_list_components,
+    cmd_list_tools,
+    cmd_audit
+)
+from sec_audit_linux.integrations import get_default_adapters
+from sec_audit_linux.reporters.tool_reporter import ToolReporter
 
 
 class TestCLIMCP(unittest.TestCase):
@@ -41,6 +49,8 @@ class TestCLIMCP(unittest.TestCase):
         self.assertIn("get_system_context", tool_names)
         self.assertIn("inspect_evidence", tool_names)
         self.assertIn("generate_remediation_plan", tool_names)
+        self.assertIn("list_integrated_security_tools", tool_names)
+        self.assertIn("get_individual_tool_report", tool_names)
 
     def test_mcp_server_tools_call(self):
         server = MCPServer()
@@ -49,15 +59,15 @@ class TestCLIMCP(unittest.TestCase):
             "id": 3,
             "method": "tools/call",
             "params": {
-                "name": "get_system_context",
+                "name": "list_integrated_security_tools",
                 "arguments": {}
             }
         }
         resp = server.handle_request(req)
         self.assertEqual(resp["id"], 3)
         content = json.loads(resp["result"]["content"][0]["text"])
-        self.assertIn("hostname", content)
-        self.assertIn("os_family", content)
+        self.assertIn("tools", content)
+        self.assertGreaterEqual(len(content["tools"]), 10)
 
     def test_cli_subcommands(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -73,10 +83,15 @@ class TestCLIMCP(unittest.TestCase):
             # Test list-components
             self.assertEqual(cmd_list_components(args), 0)
 
-            # Test audit execution with temporary output dir
+            # Test list-tools
+            self.assertEqual(cmd_list_tools(args), 0)
+
+            # Test audit execution with tools and temporary output dir
             audit_args = argparse.Namespace(
                 framework="cis_benchmarks,pci_dss",
                 component="system,ssh",
+                tools="checksec,docker_bench",
+                no_tools=False,
                 output_dir=str(tmp_path)
             )
             self.assertEqual(cmd_audit(audit_args), 0)
@@ -84,6 +99,7 @@ class TestCLIMCP(unittest.TestCase):
             self.assertTrue((tmp_path / "technical_report.md").exists())
             self.assertTrue((tmp_path / "assessment_result.json").exists())
             self.assertTrue((tmp_path / "remediation_playbook.sh").exists())
+            self.assertTrue((tmp_path / "tools").exists())
 
 
 if __name__ == "__main__":
