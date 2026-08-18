@@ -32,6 +32,18 @@ class TestCLIMCP(unittest.TestCase):
         resp = server.handle_request(req)
         self.assertEqual(resp["id"], 1)
         self.assertIn("protocolVersion", resp["result"])
+        self.assertIn("capabilities", resp["result"])
+
+    def test_mcp_server_notifications_and_ping(self):
+        server = MCPServer()
+        # Notifications should return None (no reply required per MCP specification)
+        self.assertIsNone(server.handle_request({"method": "notifications/initialized"}))
+        self.assertIsNone(server.handle_request({"method": "initialized"}))
+
+        # Ping should return empty result dict
+        ping_resp = server.handle_request({"jsonrpc": "2.0", "id": 10, "method": "ping"})
+        self.assertEqual(ping_resp["id"], 10)
+        self.assertEqual(ping_resp["result"], {})
 
     def test_mcp_server_tools_list(self):
         server = MCPServer()
@@ -51,6 +63,40 @@ class TestCLIMCP(unittest.TestCase):
         self.assertIn("generate_remediation_plan", tool_names)
         self.assertIn("list_integrated_security_tools", tool_names)
         self.assertIn("get_individual_tool_report", tool_names)
+        self.assertIn("get_finding_details", tool_names)
+        self.assertIn("get_compliance_summary", tool_names)
+        self.assertIn("get_sbom_inventory", tool_names)
+
+    def test_mcp_server_resources_and_prompts(self):
+        server = MCPServer()
+
+        # Resources list
+        res_list = server.handle_request({"jsonrpc": "2.0", "id": 4, "method": "resources/list"})
+        self.assertIn("resources", res_list["result"])
+        self.assertGreaterEqual(len(res_list["result"]["resources"]), 3)
+
+        # Resource read
+        res_read = server.handle_request({
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "resources/read",
+            "params": {"uri": "audit://system/context"}
+        })
+        self.assertIn("contents", res_read["result"])
+
+        # Prompts list
+        prompts_list = server.handle_request({"jsonrpc": "2.0", "id": 6, "method": "prompts/list"})
+        self.assertIn("prompts", prompts_list["result"])
+        self.assertGreaterEqual(len(prompts_list["result"]["prompts"]), 3)
+
+        # Prompt get
+        prompt_get = server.handle_request({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "prompts/get",
+            "params": {"name": "full_security_assessment"}
+        })
+        self.assertIn("messages", prompt_get["result"])
 
     def test_mcp_server_tools_call(self):
         server = MCPServer()

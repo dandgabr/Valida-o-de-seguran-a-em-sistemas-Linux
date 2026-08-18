@@ -1,0 +1,12 @@
+{
+  "$schema": "https://raw.githubusercontent.com/modelcontextprotocol/schema/main/schema.json",
+  "mcpServers": {
+    "sec-audit-linux": {
+      "command": "/home/danielgoncalves/Code/Valida-o-de-seguran-a-em-sistemas-Linux/bin/sec-audit-mcp",
+      "args": [],
+      "env": {
+        "PYTHONPATH": "/home/danielgoncalves/Code/Valida-o-de-seguran-a-em-sistemas-Linux/src"
+      }
+    }
+  }
+}
