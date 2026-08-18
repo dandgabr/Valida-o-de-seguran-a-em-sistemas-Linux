@@ -4,21 +4,28 @@
 # ==============================================================================
 set -euo pipefail
 
-USER_BIN_DIR="$(dirname "$(dirname "$(readlink -f "$0")")")"
-CURRENT_CLI="${HOME}/.local/bin/sec-audit-linux"
-CURRENT_MCP="${HOME}/.local/bin/sec-audit-mcp"
+REPO_DIR="$(cd "$(dirname "$(dirname "${BASH_SOURCE[0]}")")" && pwd)"
+BIN_CLI="${REPO_DIR}/bin/sec-audit-linux"
+BIN_MCP="${REPO_DIR}/bin/sec-audit-mcp"
 
-echo "[*] Target CLI binary: ${CURRENT_CLI}"
-echo "[*] Target MCP binary: ${CURRENT_MCP}"
+echo "[*] Project directory: ${REPO_DIR}"
+echo "[*] Source CLI executable: ${BIN_CLI}"
+echo "[*] Source MCP executable: ${BIN_MCP}"
 
-if [ ! -f "${CURRENT_CLI}" ]; then
-    echo "[-] Error: ${CURRENT_CLI} not found. Running local editable install first..."
-    pip install -e "${USER_BIN_DIR}"
-fi
+# Ensure execute permissions
+chmod +x "${BIN_CLI}" "${BIN_MCP}"
 
-echo "[*] Creating symlinks in /usr/local/bin (requires sudo)..."
-sudo ln -sf "${CURRENT_CLI}" /usr/local/bin/sec-audit-linux
-sudo ln -sf "${CURRENT_MCP}" /usr/local/bin/sec-audit-mcp
+# Update ~/.local/bin as well
+mkdir -p "${HOME}/.local/bin"
+cp -f "${BIN_CLI}" "${HOME}/.local/bin/sec-audit-linux"
+cp -f "${BIN_MCP}" "${HOME}/.local/bin/sec-audit-mcp"
 
-echo "[+] Successfully linked!"
-echo "[+] You can now run: sudo sec-audit-linux audit --all"
+# Create symlinks in /usr/local/bin (accessible by sudo and system PATH)
+echo "[*] Creating symlinks in /usr/local/bin (requires sudo password)..."
+sudo ln -sf "${BIN_CLI}" /usr/local/bin/sec-audit-linux
+sudo ln -sf "${BIN_MCP}" /usr/local/bin/sec-audit-mcp
+
+echo "[+] Installation complete!"
+echo "[+] You can now run:"
+echo "    sec-audit-linux audit --all"
+echo "    sudo sec-audit-linux audit --all"

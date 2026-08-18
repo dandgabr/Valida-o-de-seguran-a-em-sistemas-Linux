@@ -1,0 +1,32 @@
+#!/usr/bin/env python3
+"""MCP Server wrapper executable with dynamic path resolution for root and non-root execution."""
+
+import sys
+import os
+from pathlib import Path
+
+# Automatically locate and inject repository src into sys.path
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent if SCRIPT_DIR.name == "bin" else SCRIPT_DIR
+SRC_DIR = REPO_ROOT / "src"
+
+PATHS_TO_TRY = [
+    SRC_DIR,
+    Path("/home/danielgoncalves/Code/Valida-o-de-seguran-a-em-sistemas-Linux/src"),
+    Path("/home/danielgoncalves/.local/lib/python3.14/site-packages")
+]
+
+for p in PATHS_TO_TRY:
+    if p.exists() and str(p) not in sys.path:
+        sys.path.insert(0, str(p))
+
+try:
+    from sec_audit_linux.interfaces.mcp_server import main
+except ImportError:
+    cwd_src = Path(os.getcwd()) / "src"
+    if cwd_src.exists() and str(cwd_src) not in sys.path:
+        sys.path.insert(0, str(cwd_src))
+    from sec_audit_linux.interfaces.mcp_server import main
+
+if __name__ == "__main__":
+    sys.exit(main())
