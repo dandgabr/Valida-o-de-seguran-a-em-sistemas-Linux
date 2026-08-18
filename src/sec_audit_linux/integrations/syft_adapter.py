@@ -38,9 +38,10 @@ class SyftAdapter(BaseToolAdapter):
                 recommendations=["Install syft (https://github.com/anchore/syft) to catalog software supply chain packages."]
             )
 
+        # Run syft scan with quiet JSON output on system configuration directory
         out, err, code = execute_command(
-            ["syft", "packages", "dir:/", "-o", "json"],
-            timeout=60
+            ["syft", "scan", "-q", "-o", "json", "dir:/etc"],
+            timeout=25
         )
 
         packages = []

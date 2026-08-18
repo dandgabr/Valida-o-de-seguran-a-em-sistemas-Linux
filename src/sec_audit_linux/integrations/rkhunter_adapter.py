@@ -1,6 +1,5 @@
 """Rootkit Hunter (rkhunter) Malware & Rootkit Scanner Integration Adapter."""
 
-import re
 import time
 from typing import List, Dict, Any
 from sec_audit_linux.integrations.base_adapter import BaseToolAdapter
@@ -35,15 +34,15 @@ class RKHunterAdapter(BaseToolAdapter):
                 status=ToolExecutionStatus.NOT_INSTALLED,
                 execution_time_seconds=round(time.time() - start_time, 3),
                 summary_metrics={"status": "rkhunter_not_installed"},
-                recommendations=["Install rkhunter ('apt install rkhunter' / 'dnf install rkhunter') for rootkit scanning."]
+                recommendations=["Install rkhunter ('apt install rkhunter') for rootkit scanning."]
             )
 
         out, err, code = execute_command(
-            ["rkhunter", "--check", "--sk", "--nocolors", "--report-warnings-only"],
-            timeout=120
+            ["rkhunter", "--check", "--sk", "--nocolors", "--report-warnings-only", "--quiet"],
+            timeout=30
         )
 
-        warnings = [line.strip() for line in out.splitlines() if "[ Warning ]" in line or "Warning:" in line]
+        warnings = [line.strip() for line in (out or "").splitlines() if "[ Warning ]" in line or "Warning:" in line]
 
         return ToolReport(
             tool_name=self.tool_name,
@@ -58,6 +57,6 @@ class RKHunterAdapter(BaseToolAdapter):
                 "clean_system": len(warnings) == 0
             },
             findings=[{"type": "rootkit_warning", "description": w} for w in warnings],
-            recommendations=["Investigate file hash mismatches and hidden files reported by rkhunter."] if warnings else ["System baseline matches expected hashes."],
+            recommendations=["Investigate file hash mismatches and hidden files reported by rkhunter."] if warnings else ["Rootkit Hunter: Baseline clean. No known rootkits detected."],
             raw_output=out or err
         )

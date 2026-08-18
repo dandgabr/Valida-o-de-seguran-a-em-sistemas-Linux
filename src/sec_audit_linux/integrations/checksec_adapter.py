@@ -1,5 +1,6 @@
 """Checksec Binary Protection & Compiler Hardening Adapter."""
 
+import json
 import os
 import time
 from typing import List, Dict, Any
@@ -36,16 +37,34 @@ class ChecksecAdapter(BaseToolAdapter):
 
         existing_bins = [b for b in self.CRITICAL_BINARIES if os.path.exists(b)]
         findings = []
-        metrics = {"total_audited": len(existing_bins), "full_relro": 0, "canary_enabled": 0, "nx_enabled": 0, "pie_enabled": 0}
+        metrics = {
+            "total_audited": len(existing_bins),
+            "full_relro": 0,
+            "canary_enabled": 0,
+            "nx_enabled": 0,
+            "pie_enabled": 0
+        }
 
         if is_installed:
             for b in existing_bins:
-                out, _, code = execute_command(["checksec", "--file=" + b, "--format=json"], timeout=10)
+                out, _, code = execute_command(["checksec", f"--file={b}", "--format=json"], timeout=10)
                 if code == 0 and out.strip():
-                    findings.append({"binary": b, "raw_checksec": out.strip()})
+                    try:
+                        parsed = json.loads(out)
+                        b_data = parsed.get(b, {})
+                        if b_data.get("relro") == "full":
+                            metrics["full_relro"] += 1
+                        if b_data.get("canary") in ["yes", "true"]:
+                            metrics["canary_enabled"] += 1
+                        if b_data.get("nx") in ["yes", "true"]:
+                            metrics["nx_enabled"] += 1
+                        if b_data.get("pie") in ["yes", "true"]:
+                            metrics["pie_enabled"] += 1
+                        findings.append({"binary": b, "properties": b_data})
+                    except Exception:
+                        findings.append({"binary": b, "raw": out.strip()})
                 else:
-                    out_txt, _, _ = execute_command(["checksec", "--file=" + b], timeout=10)
-                    findings.append({"binary": b, "summary": out_txt.strip()})
+                    findings.append({"binary": b, "status": "check_failed"})
 
             return ToolReport(
                 tool_name=self.tool_name,
@@ -55,12 +74,12 @@ class ChecksecAdapter(BaseToolAdapter):
                 version=self.get_version(),
                 status=ToolExecutionStatus.SUCCESS,
                 execution_time_seconds=round(time.time() - start_time, 3),
-                summary_metrics={"audited_binaries_count": len(existing_bins)},
+                summary_metrics=metrics,
                 findings=findings,
-                recommendations=["Compile custom corporate binaries with flags: -fstack-protector-strong -Wl,-z,relro,-z,now -fPIE -pie"]
+                recommendations=["Ensure all system binaries use -fstack-protector-strong, Full RELRO and Position Independent Executables (-fPIE)."]
             )
         else:
-            # Fallback native check using readelf or file
+            # Fallback native check using readelf
             has_readelf = check_command_available("readelf")
             for b in existing_bins:
                 b_info = {"binary": b}
@@ -84,5 +103,5 @@ class ChecksecAdapter(BaseToolAdapter):
                 execution_time_seconds=round(time.time() - start_time, 3),
                 summary_metrics=metrics,
                 findings=findings,
-                recommendations=["Install checksec (apt install checksec / go install github.com/slimm609/checksec) for full JSON reports."]
+                recommendations=["Install checksec (apt install checksec) for full JSON compiler reports."]
             )

@@ -35,23 +35,47 @@ class AIDEAdapter(BaseToolAdapter):
                 status=ToolExecutionStatus.NOT_INSTALLED,
                 execution_time_seconds=round(time.time() - start_time, 3),
                 summary_metrics={"status": "aide_not_installed"},
-                recommendations=["Install aide ('apt install aide' or 'dnf install aide') and run aideinit to establish baseline hashes."]
+                recommendations=["Install aide ('apt install aide') and run aideinit to establish baseline hashes."]
             )
 
-        out, err, code = execute_command(["aide", "--check"], timeout=45)
-        return ToolReport(
-            tool_name=self.tool_name,
-            tool_category=self.tool_category,
-            license=self.license,
-            is_installed=True,
-            version=self.get_version(),
-            status=ToolExecutionStatus.SUCCESS if code in [0, 4] else ToolExecutionStatus.FAILED,
-            execution_time_seconds=round(time.time() - start_time, 3),
-            summary_metrics={
-                "exit_code": code,
-                "clean_baseline": code == 0,
-                "changes_detected": code != 0
-            },
-            findings=[{"raw_check_summary": out[:1000]}],
-            recommendations=["Review modified files in AIDE log if baseline changes are reported."]
-        )
+        db_paths = [
+            "/var/lib/aide/aide.db",
+            "/var/lib/aide/aide.db.gz",
+            "/var/lib/aide/aide.db.new"
+        ]
+        has_db = any(os.path.exists(p) for p in db_paths)
+
+        if has_db:
+            out, err, code = execute_command(["aide", "--check", "--quiet"], timeout=30)
+            return ToolReport(
+                tool_name=self.tool_name,
+                tool_category=self.tool_category,
+                license=self.license,
+                is_installed=True,
+                version=self.get_version(),
+                status=ToolExecutionStatus.SUCCESS if code in [0, 4] else ToolExecutionStatus.FAILED,
+                execution_time_seconds=round(time.time() - start_time, 3),
+                summary_metrics={
+                    "database_present": True,
+                    "clean_baseline": code == 0,
+                    "changes_detected": code != 0
+                },
+                findings=[{"status": "clean" if code == 0 else "integrity_deviation_detected"}],
+                recommendations=["Review modified files in /var/log/aide/aide.log if baseline changes are reported."]
+            )
+        else:
+            return ToolReport(
+                tool_name=self.tool_name,
+                tool_category=self.tool_category,
+                license=self.license,
+                is_installed=True,
+                version=self.get_version(),
+                status=ToolExecutionStatus.SUCCESS,
+                execution_time_seconds=round(time.time() - start_time, 3),
+                summary_metrics={
+                    "database_present": False,
+                    "aide_installed": True
+                },
+                findings=[{"status": "aide_database_uninitialized"}],
+                recommendations=["Run 'sudo aideinit' to generate initial baseline database."]
+            )

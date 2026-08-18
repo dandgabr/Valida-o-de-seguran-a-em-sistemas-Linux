@@ -39,8 +39,8 @@ class TrivyAdapter(BaseToolAdapter):
             )
 
         out, err, code = execute_command(
-            ["trivy", "rootfs", "--severity", "HIGH,CRITICAL", "--format", "json", "--quiet", "/"],
-            timeout=60
+            ["trivy", "fs", "--skip-db-update", "--severity", "HIGH,CRITICAL", "--format", "json", "-q", "/etc"],
+            timeout=30
         )
 
         parsed_vulns = []

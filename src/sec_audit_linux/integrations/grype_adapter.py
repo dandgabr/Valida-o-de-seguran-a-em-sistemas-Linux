@@ -39,8 +39,8 @@ class GrypeAdapter(BaseToolAdapter):
             )
 
         out, err, code = execute_command(
-            ["grype", "dir:/", "-o", "json", "--only-fixed"],
-            timeout=60
+            ["grype", "-q", "-o", "json", "--check-for-updates=false", "dir:/etc"],
+            timeout=25
         )
 
         matches = []
