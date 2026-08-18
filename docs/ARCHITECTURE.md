@@ -184,3 +184,56 @@ Consolidação do resultado por framework:
 1. **Execução Segura (Read-Only Default)**: Todas as auditorias e coletas são estritamente de leitura. O motor de avaliação nunca altera arquivos de configuração durante o assessment.
 2. **Tratamento de Privilégios**: Coletas que necessitam de privilégios de root (ex: leitura de `/etc/shadow`, regras completas de `auditd` ou `nftables`) validam o nível de permissão e reportam `INSUFFICIENT_PRIVILEGES` de forma controlada, sem abortar a auditoria dos demais itens.
 3. **Ofuscação de Segredos**: Hashes de senhas, chaves privadas e certificados confidenciais têm seus valores sensíveis mascarados nos relatórios públicos e mantidos apenas como hash de validação.
+
+---
+
+## 6. Motor de Deduplicação Multi-Fonte (`FindingDeduplicator`)
+
+Quando múltiplas ferramentas (Lynis, Checksec, Docker Bench, SSG) e múltiplos frameworks regulatórios (CIS, NIST, PCI, MITRE) avaliam o mesmo problema (ex: `PermitRootLogin`, `fs.suid_dumpable` ou `NOPASSWD`), o motor unifica essas detecções em um único objeto `UnifiedFinding`:
+
+```mermaid
+flowchart TD
+    CIS["CIS Benchmark (CIS-5.2.1)"] --> DEDUP["FindingDeduplicator"]
+    MITRE["MITRE ATT&CK (T1021.004)"] --> DEDUP
+    SSG["SCAP SSG (rule_sshd_disable_root_login)"] --> DEDUP
+    LYNIS["Lynis Audit (SSH-7408)"] --> DEDUP
+    
+    DEDUP --> UNIFIED["UnifiedFinding (FIND-SSH-PERMIT_ROOT_LOGIN)\nSeveridade: HIGH | Fontes: 4 | Ação Única"]
+```
+
+### Propriedades do `UnifiedFinding`:
+- `finding_id`: Identificador canônico deduplicado (ex: `FIND-SSH-PERMIT_ROOT_LOGIN`).
+- `title`: Título claro e objetivo do problema.
+- `severity`: Severidade calculada pela maior criticidade entre as fontes associadas.
+- `sources`: Lista com todas as origens que reportaram o mesmo problema.
+- `expected_value` & `actual_value`: Valores esperados e estado real detectado no sistema.
+- `remediation_cmd`: Comando prescritivo unificado para remediação.
+
+---
+
+## 7. Inspeção Profunda de Contêineres e Docker
+
+O coletor `ContainersCollector` executa validação em duas camadas:
+1. **Auditoria do Daemon Docker (`/etc/docker/daemon.json`)**:
+   - `icc`: Inter-container communication (deve ser `false`).
+   - `no-new-privileges`: Prevenção de escalada de privilégios via SUID em containers (deve ser `true`).
+   - `live-restore`: Disponibilidade do container durante updates de daemon (deve ser `true`).
+   - `userland-proxy`: Desativação de proxy userland para melhor roteamento via iptables (deve ser `false`).
+2. **Inspeção de Contêineres em Execução (`docker inspect`)**:
+   - Detecção de containers com flag `--privileged`.
+   - Modos de rede perigosos (`--net=host`).
+   - Montagens de diretórios sensíveis do host (`/`, `/etc`, `/proc`, `/sys`, `/var/run/docker.sock`).
+   - Execução como usuário `root` (UID 0) sem `USER` seguro no Dockerfile.
+   - Adição de capacidades perigosas do kernel (`CAP_SYS_ADMIN`, `CAP_NET_ADMIN`).
+
+---
+
+## 8. Arquitetura do Playbook de Hardening e Rollback
+
+O gerador `RemediationGenerator` produz scripts Bash corporativos e modulares baseados no estado auditado:
+
+- **Manifesto de Backup**: Registrado em JSON (`/var/backups/hardening/backup_<timestamp>/manifest.json`).
+- **Feedback Visual**: Cores ANSI, indicadores de progresso `[X/N]` e mensagens em português.
+- **Rollback Transacional**:
+  - Rollback total com restauração de cópias exatas e permissões preservadas.
+  - Rollback granular por componente (`--rollback-comp sysctl|ssh|docker|modules|sudoers`).
