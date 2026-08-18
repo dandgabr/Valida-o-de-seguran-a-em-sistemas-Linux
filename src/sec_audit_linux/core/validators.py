@@ -360,7 +360,13 @@ class ServiceStatusValidator(BaseValidator):
         actual_state = evidence_record.parsed_data.get(self.service_name, "disabled_or_not_found").lower()
 
         if self.expected_state in ["disabled", "masked"]:
-            is_compliant = "disabled" in actual_state or "not_found" in actual_state or "masked" in actual_state
+            is_compliant = (
+                "disabled" in actual_state
+                or "not_found" in actual_state
+                or "not-found" in actual_state
+                or "masked" in actual_state
+                or "inactive" in actual_state
+            )
         else:
             is_compliant = self.expected_state in actual_state
 

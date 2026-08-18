@@ -22,15 +22,17 @@ class SSHCollector(BaseCollector):
     def collect(self, context: SystemContext) -> List[EvidenceRecord]:
         records: List[EvidenceRecord] = []
 
-        # 1. Effective Runtime OpenSSH Settings (via `sshd -T`)
+        # 1. Effective Runtime OpenSSH Settings (via `sshd -T` or `/usr/sbin/sshd -T`)
         effective_settings: Dict[str, str] = {}
         sshd_t_out, sshd_t_err, sshd_t_code = execute_command(["sshd", "-T"])
+        if sshd_t_code != 0:
+            sshd_t_out, sshd_t_err, sshd_t_code = execute_command(["/usr/sbin/sshd", "-T"])
         
         if sshd_t_code == 0:
             for line in sshd_t_out.splitlines():
                 if " " in line:
                     key, val = line.split(" ", 1)
-                    effective_settings[key.strip().lower()] = val.strip()
+                    effective_settings[key.strip().lower()] = val.strip().lower()
 
         # 2. Configuration files in /etc/ssh/
         config_files = ["/etc/ssh/sshd_config"] + glob.glob("/etc/ssh/sshd_config.d/*.conf")
@@ -44,6 +46,17 @@ class SSHCollector(BaseCollector):
             content, _ = read_system_file(cf)
             if content:
                 raw_configs.append(f"--- {cf} ---\n{content}")
+                # Parse config files directly if sshd runtime command was not available
+                if not effective_settings or sshd_t_code != 0:
+                    for line in content.splitlines():
+                        line_clean = line.strip()
+                        if line_clean and not line_clean.startswith("#") and (" " in line_clean or "\t" in line_clean):
+                            parts = line_clean.split(None, 1)
+                            if len(parts) == 2:
+                                k = parts[0].strip().lower()
+                                v = parts[1].strip().lower()
+                                if k not in effective_settings:
+                                    effective_settings[k] = v
 
         # 3. Analyze SSH Parameters against Hardening Best Practices
         ciphers = [c.strip() for c in effective_settings.get("ciphers", "").split(",") if c.strip()]
@@ -57,13 +70,21 @@ class SSHCollector(BaseCollector):
         parsed_analysis = {
             "sshd_active": sshd_t_code == 0,
             "permit_root_login": effective_settings.get("permitrootlogin", "unset"),
+            "permitrootlogin": effective_settings.get("permitrootlogin", "unset"),
             "password_authentication": effective_settings.get("passwordauthentication", "unset"),
+            "passwordauthentication": effective_settings.get("passwordauthentication", "unset"),
             "permit_empty_passwords": effective_settings.get("permitemptypasswords", "unset"),
+            "permitemptypasswords": effective_settings.get("permitemptypasswords", "unset"),
             "x11_forwarding": effective_settings.get("x11forwarding", "unset"),
+            "x11forwarding": effective_settings.get("x11forwarding", "unset"),
             "max_auth_tries": effective_settings.get("maxauthtries", "unset"),
+            "maxauthtries": effective_settings.get("maxauthtries", "unset"),
             "client_alive_interval": effective_settings.get("clientaliveinterval", "unset"),
+            "clientaliveinterval": effective_settings.get("clientaliveinterval", "unset"),
             "client_alive_count_max": effective_settings.get("clientalivecountmax", "unset"),
+            "clientalivecountmax": effective_settings.get("clientalivecountmax", "unset"),
             "use_pam": effective_settings.get("usepam", "unset"),
+            "usepam": effective_settings.get("usepam", "unset"),
             "protocol": effective_settings.get("protocol", "2"),
             "ciphers": ciphers,
             "macs": macs,
