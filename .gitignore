@@ -217,3 +217,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Security Assessment Generated Reports & Artifacts
+audit_reports/
+reports/
+*.report.json
+*.report.md
+assessment_result.json
+executive_report.md
+technical_report.md
+remediation_playbook.sh
