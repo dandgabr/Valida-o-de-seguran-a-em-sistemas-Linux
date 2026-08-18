@@ -1,5 +1,6 @@
-"""System, Kernel, Bootloader, Sysctl, and Systemd Collector."""
+"""System, Kernel, Bootloader, Sysctl, Kernel Modules, and Systemd Collector."""
 
+import glob
 import os
 from typing import List, Dict, Any
 from sec_audit_linux.collectors.base import BaseCollector
@@ -13,12 +14,12 @@ from sec_audit_linux.core.utils import (
 
 
 class SystemCollector(BaseCollector):
-    """Audits OS Kernel parameters, sysctl configurations, bootloader, and services."""
+    """Audits OS Kernel parameters, sysctl, disabled kernel modules, bootloader, and services."""
 
     name = "system"
-    description = "Audits Kernel, Sysctl, Bootloader, GRUB, and Systemd parameters"
+    description = "Audits Kernel, Sysctl, Kernel Modules, Bootloader, GRUB, and Systemd parameters"
 
-    # Core security sysctl parameters to evaluate across CIS / NIST benchmarks
+    # Core security sysctl parameters
     AUDIT_SYSCTLS = [
         "fs.suid_dumpable",
         "fs.protected_hardlinks",
@@ -54,19 +55,23 @@ class SystemCollector(BaseCollector):
         "net.ipv6.conf.default.accept_redirects"
     ]
 
+    # Uncommon filesystems and protocols that should be disabled
+    UNCOMMON_MODULES = [
+        "cramfs", "freevxfs", "jffs2", "hfs", "hfsplus", "squashfs", "udf",
+        "dccp", "sctp", "rds", "tipc"
+    ]
+
     def collect(self, context: SystemContext) -> List[EvidenceRecord]:
         records: List[EvidenceRecord] = []
 
         # 1. Kernel Runtime Sysctl Parameters
         sysctl_values: Dict[str, str] = {}
         for param in self.AUDIT_SYSCTLS:
-            # Try reading from /proc/sys/
             proc_path = "/proc/sys/" + param.replace(".", "/")
-            val, err = read_system_file(proc_path)
+            val, _ = read_system_file(proc_path)
             if val is not None:
                 sysctl_values[param] = val.strip()
             else:
-                # Fallback to sysctl command
                 out, _, code = execute_command(["sysctl", "-n", param])
                 if code == 0 and out.strip():
                     sysctl_values[param] = out.strip()
@@ -81,7 +86,39 @@ class SystemCollector(BaseCollector):
             sha256_checksum=calculate_sha256(str(sysctl_values))
         ))
 
-        # 2. Bootloader & GRUB Security
+        # 2. Kernel Modules Status (Uncommon filesystems & protocols)
+        modprobe_files = glob.glob("/etc/modprobe.d/*.conf") + ["/etc/modprobe.conf"]
+        mod_contents = ""
+        for mf in modprobe_files:
+            content, _ = read_system_file(mf)
+            if content:
+                mod_contents += f"\n{content}"
+
+        disabled_modules = {}
+        for mod in self.UNCOMMON_MODULES:
+            # Check if install /bin/true or /bin/false or blacklist present
+            is_disabled = (
+                f"install {mod} /bin/true" in mod_contents
+                or f"install {mod} /bin/false" in mod_contents
+                or f"blacklist {mod}" in mod_contents
+            )
+            # Check runtime lsmod
+            lsmod_out, _, _ = execute_command(["lsmod"])
+            is_loaded = mod in (lsmod_out or "")
+            disabled_modules[mod] = {
+                "disabled_in_config": is_disabled,
+                "loaded_in_kernel": is_loaded,
+                "is_secure": is_disabled and not is_loaded
+            }
+
+        records.append(EvidenceRecord(
+            collector_name=self.name,
+            target_item="kernel_modules_status",
+            raw_output=f"Kernel modules audit:\n{disabled_modules}",
+            parsed_data=disabled_modules
+        ))
+
+        # 3. Bootloader & GRUB Security
         grub_paths = [
             "/boot/grub2/grub.cfg",
             "/boot/grub/grub.cfg",
@@ -105,17 +142,13 @@ class SystemCollector(BaseCollector):
                     }
                 ))
 
-        # 3. Secure Boot Status
+        # 4. Secure Boot Status
         sb_out, _, sb_code = execute_command(["mokutil", "--sb-state"])
         sb_status = "unknown"
         if sb_code == 0:
             sb_status = "enabled" if "SecureBoot enabled" in sb_out else "disabled"
         else:
-            # Check efi sysfs
-            if os.path.exists("/sys/firmware/efi"):
-                sb_status = "efi_present"
-            else:
-                sb_status = "legacy_bios"
+            sb_status = "efi_present" if os.path.exists("/sys/firmware/efi") else "legacy_bios"
 
         records.append(EvidenceRecord(
             collector_name=self.name,
@@ -124,7 +157,7 @@ class SystemCollector(BaseCollector):
             parsed_data={"secure_boot": sb_status}
         ))
 
-        # 4. Systemd Units & Dangerous/Unneeded Services
+        # 5. Dangerous / Unnecessary Services
         dangerous_services = [
             "telnet.socket", "telnet.service",
             "rsh.socket", "rsh.service",
@@ -134,7 +167,8 @@ class SystemCollector(BaseCollector):
             "nfs-server.service", "rpcbind.service",
             "avahi-daemon.service", "cups.service",
             "dhcpd.service", "slapd.service",
-            "smb.service", "nmb.service", "snmpd.service"
+            "smb.service", "nmb.service", "snmpd.service",
+            "xinetd.service", "nis.service"
         ]
 
         svc_states: Dict[str, str] = {}
@@ -147,6 +181,26 @@ class SystemCollector(BaseCollector):
             target_item="unnecessary_services",
             raw_output="\n".join(f"{k}: {v}" for k, v in svc_states.items()),
             parsed_data=svc_states
+        ))
+
+        # 6. Session Timeout (TMOUT in /etc/profile & /etc/bash.bashrc)
+        profile_files = ["/etc/profile", "/etc/bash.bashrc"] + glob.glob("/etc/profile.d/*.sh")
+        tmout_val = None
+        for pf in profile_files:
+            content, _ = read_system_file(pf)
+            if content and "TMOUT=" in content:
+                for line in content.splitlines():
+                    if "TMOUT=" in line and not line.strip().startswith("#"):
+                        tmout_val = line.split("TMOUT=", 1)[1].split(";")[0].strip()
+
+        records.append(EvidenceRecord(
+            collector_name=self.name,
+            target_item="shell_session_timeout",
+            raw_output=f"TMOUT value found: {tmout_val}",
+            parsed_data={
+                "tmout_configured": tmout_val is not None,
+                "tmout_seconds": int(tmout_val) if tmout_val and tmout_val.isdigit() else -1
+            }
         ))
 
         return records

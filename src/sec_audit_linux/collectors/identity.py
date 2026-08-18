@@ -49,11 +49,12 @@ class IdentityCollector(BaseCollector):
             }
         ))
 
-        # 2. Inspect /etc/shadow: Empty passwords, locked accounts (if readable / running as root)
+        # 2. Inspect /etc/shadow: Empty passwords, locked accounts
         shadow_content, shadow_err = read_system_file("/etc/shadow")
         empty_password_users = []
         locked_users = []
         active_users = []
+        hashing_methods = []
 
         if shadow_content:
             shadow_rows = parse_colon_file(shadow_content)
@@ -67,6 +68,12 @@ class IdentityCollector(BaseCollector):
                         locked_users.append(user)
                     else:
                         active_users.append(user)
+                        if pw_hash.startswith("$6$"):
+                            hashing_methods.append("sha512")
+                        elif pw_hash.startswith("$y$"):
+                            hashing_methods.append("yescrypt")
+                        elif pw_hash.startswith("$1$"):
+                            hashing_methods.append("md5_insecure")
 
             records.append(EvidenceRecord(
                 collector_name=self.name,
@@ -76,7 +83,9 @@ class IdentityCollector(BaseCollector):
                     "empty_password_users": empty_password_users,
                     "has_empty_passwords": len(empty_password_users) > 0,
                     "active_user_count": len(active_users),
-                    "locked_user_count": len(locked_users)
+                    "locked_user_count": len(locked_users),
+                    "hashing_methods": list(set(hashing_methods)),
+                    "has_insecure_hashing": "md5_insecure" in hashing_methods
                 }
             ))
         else:
@@ -89,10 +98,8 @@ class IdentityCollector(BaseCollector):
 
         # 3. Password Aging Policy in /etc/login.defs
         login_defs_content, _ = read_system_file("/etc/login.defs")
-        login_defs_dict: Dict[str, str] = {}
         if login_defs_content:
             login_defs_dict = parse_key_value_file(login_defs_content, delimiter=" ", comment_char="#")
-            # Filter standard security keys
             sec_keys = ["PASS_MAX_DAYS", "PASS_MIN_DAYS", "PASS_WARN_AGE", "ENCRYPT_METHOD", "UMASK"]
             login_defs_filtered = {k: login_defs_dict.get(k, "unset") for k in sec_keys}
             records.append(EvidenceRecord(
@@ -107,6 +114,8 @@ class IdentityCollector(BaseCollector):
         nopasswd_entries = []
         excessive_wildcards = []
         all_sudoers_rules = []
+        has_use_pty = False
+        has_logfile = False
 
         for sf in sudoers_files:
             content, _ = read_system_file(sf)
@@ -120,6 +129,10 @@ class IdentityCollector(BaseCollector):
                         nopasswd_entries.append(f"{sf}: {line}")
                     if re.search(r"ALL\s*=\s*\(ALL(:ALL)?\)\s*NOPASSWD:\s*ALL", line):
                         excessive_wildcards.append(f"{sf}: {line}")
+                    if "use_pty" in line:
+                        has_use_pty = True
+                    if "logfile=" in line:
+                        has_logfile = True
 
         records.append(EvidenceRecord(
             collector_name=self.name,
@@ -129,7 +142,9 @@ class IdentityCollector(BaseCollector):
                 "nopasswd_entries": nopasswd_entries,
                 "has_nopasswd": len(nopasswd_entries) > 0,
                 "excessive_wildcards": excessive_wildcards,
-                "has_full_nopasswd_all": len(excessive_wildcards) > 0
+                "has_full_nopasswd_all": len(excessive_wildcards) > 0,
+                "has_use_pty": has_use_pty,
+                "has_logfile": has_logfile
             }
         ))
 
@@ -144,6 +159,19 @@ class IdentityCollector(BaseCollector):
             target_item="pam_pwquality_config",
             raw_output=pwquality_content or "pwquality.conf not present",
             parsed_data=pwquality_data
+        ))
+
+        # 6. PAM Account Lockout (/etc/security/faillock.conf)
+        faillock_content, _ = read_system_file("/etc/security/faillock.conf")
+        faillock_data: Dict[str, str] = {}
+        if faillock_content:
+            faillock_data = parse_key_value_file(faillock_content, delimiter="=")
+
+        records.append(EvidenceRecord(
+            collector_name=self.name,
+            target_item="pam_faillock_config",
+            raw_output=faillock_content or "faillock.conf not present",
+            parsed_data=faillock_data
         ))
 
         return records
