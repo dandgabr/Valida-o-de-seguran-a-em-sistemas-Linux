@@ -1,7 +1,15 @@
 """Markdown Report Generator for Executive and Technical Audiences."""
 
 from typing import Dict, Any, List
-from sec_audit_linux.core.models import AssessmentResult, FrameworkResult, ControlEvaluation, ControlStatus, Severity, ToolReport
+from sec_audit_linux.core.models import (
+    AssessmentResult,
+    FrameworkResult,
+    ControlEvaluation,
+    ControlStatus,
+    Severity,
+    ToolReport,
+    UnifiedFinding
+)
 
 
 class MarkdownReporter:
@@ -16,7 +24,7 @@ class MarkdownReporter:
 
     @staticmethod
     def generate_executive_report(result: AssessmentResult) -> str:
-        """Generates high-level executive report with posture KPI, tool summaries, and critical risks."""
+        """Generates high-level executive report with posture KPI, tool summaries, and deduplicated findings."""
         ctx = result.system_context
         lines = []
 
@@ -39,6 +47,7 @@ class MarkdownReporter:
             lines.append(f"| **Environment** | `{'Container' if ctx.is_container else 'Bare Metal / VM'} ({ctx.virtualization})` |")
             lines.append(f"| **IP Addresses** | `{', '.join(ctx.ip_addresses)}` |")
         lines.append(f"| **Total Evidences Gathered** | `{result.total_evidences}` |")
+        lines.append(f"| **Deduplicated Security Findings** | `{len(result.unified_findings)}` |")
         lines.append(f"| **Assessment Duration** | `{result.duration_seconds}s` |")
         lines.append("")
 
@@ -56,7 +65,7 @@ class MarkdownReporter:
             )
         lines.append("")
 
-        # 3. Integrated Open-Source Security Tools Summary
+        # 3. Integrated Open-Source Security Tools Status
         if result.tools_reports:
             lines.append("## 🛠️ Integrated Open-Source Security Tools Status")
             lines.append("")
@@ -64,30 +73,29 @@ class MarkdownReporter:
             lines.append("| :--- | :--- | :--- | :--- | :--- |")
             for t_name, t_rep in result.tools_reports.items():
                 metrics_summary = ", ".join(f"{k}: {v}" for k, v in list(t_rep.summary_metrics.items())[:3])
-                status_badge = "✅ Installed" if t_rep.is_installed else "ℹ️ Evaluated"
+                status_badge = "✅ Active / Evaluated" if t_rep.is_installed else "ℹ️ Evaluated"
                 lines.append(f"| **{t_rep.tool_name.upper()}** | {t_rep.tool_category} | `{t_rep.license}` | {status_badge} | `{metrics_summary or 'N/A'}` |")
             lines.append("")
 
-        # 4. Top Critical and High Non-Compliant Findings
-        lines.append("## 🚨 Critical & High Priority Non-Compliant Findings")
+        # 4. Deduplicated Unified Findings Ledger (Merged across Tools and Manual Controls)
+        lines.append("## 🔍 Deduplicated Security Findings Ledger (Multi-Source Correlation)")
         lines.append("")
-        
-        critical_findings = []
-        for fw in result.frameworks.values():
-            for e in fw.evaluations:
-                if e.status in [ControlStatus.NON_COMPLIANT, ControlStatus.PARTIAL] and e.severity in [Severity.CRITICAL, Severity.HIGH]:
-                    critical_findings.append(e)
+        lines.append("> _Duplicate issues identified across different frameworks (CIS, NIST, ISO, MITRE) and tools (Lynis, Checksec, Docker-Bench, Trivy) have been unified into a single actionable record._")
+        lines.append("")
 
-        if critical_findings:
-            lines.append("| Framework | Control ID | Title | Severity | Actual Value | Suggested Remediation |")
+        if result.unified_findings:
+            lines.append("| Finding ID | Topic | Title | Severity | Correlated Sources | Suggested Fix |")
             lines.append("| :--- | :--- | :--- | :--- | :--- | :--- |")
-            for f in critical_findings[:15]:
-                cmd_snip = f"`{f.remediation_cmd}`" if f.remediation_cmd else "_Review manually_"
+            for f in result.unified_findings:
+                sources_str = "<br>• ".join(f.sources[:4])
+                if len(f.sources) > 4:
+                    sources_str += f"<br>_+{len(f.sources)-4} more_"
+                cmd_snip = f"`{f.remediation_cmd}`" if f.remediation_cmd else "_Review guide_"
                 lines.append(
-                    f"| {f.framework_name} | `{f.control_id}` | {f.title} | **{f.severity.value}** | `{f.actual_condition}` | {cmd_snip} |"
+                    f"| `{f.finding_id}` | {f.topic} | {f.title} | **{f.severity.value}** | • {sources_str} | {cmd_snip} |"
                 )
         else:
-            lines.append("✅ **No Critical or High severity non-compliant findings detected.**")
+            lines.append("✅ **No security findings detected.**")
 
         lines.append("")
         lines.append("---")
@@ -101,39 +109,39 @@ class MarkdownReporter:
         lines.append("# 📋 Technical Security Audit & Hardening Report")
         lines.append("")
         lines.append(f"> **Host:** `{result.system_context.hostname if result.system_context else 'Unknown'}` | "
-                     f"**Overall Score:** `{result.overall_score}%` | **Evidences:** `{result.total_evidences}`")
+                     f"**Overall Score:** `{result.overall_score}%` | **Evidences:** `{result.total_evidences}` | "
+                     f"**Deduplicated Findings:** `{len(result.unified_findings)}`")
         lines.append("")
 
-        # 1. Framework breakdown
+        # 1. Deduplicated Findings Section
+        lines.append("## 🎯 Consolidated & Deduplicated Vulnerability / Hardening Findings")
+        lines.append("")
+        for f in result.unified_findings:
+            sev_icon = "🔴" if f.severity in [Severity.CRITICAL, Severity.HIGH] else "🟡"
+            lines.append(f"### {sev_icon} [{f.severity.value}] `{f.finding_id}`: {f.title}")
+            lines.append(f"- **Topic Area:** `{f.topic}`")
+            lines.append(f"- **Correlated Framework & Tool Sources:** {', '.join(f.sources)}")
+            lines.append(f"- **Description:** {f.description}")
+            if f.actual_value:
+                lines.append(f"- **Observed Condition:** `{f.actual_value}`")
+            if f.expected_value:
+                lines.append(f"- **Expected Secure Baseline:** `{f.expected_value}`")
+            if f.remediation_cmd:
+                lines.append(f"- **Remediation Command:**\n```bash\n{f.remediation_cmd}\n```")
+            lines.append("")
+
+        # 2. Framework Breakdown
+        lines.append("## 🛡️ Regulatory and Standards Framework Breakdown")
+        lines.append("")
         for fw_id, fw in result.frameworks.items():
-            lines.append(f"## 🛡️ {fw.framework_name} ({fw.version})")
+            lines.append(f"### {fw.framework_name} ({fw.version})")
             lines.append(f"- **Adherence:** `{fw.adherence_percentage:.2f}%`")
-            lines.append(f"- **Compliant Controls:** `{fw.compliant_count} / {fw.total_controls}`")
-            lines.append(f"- **Non-Compliant:** `{fw.non_compliant_count}` | **Partial:** `{fw.partial_count}` | **Manual:** `{fw.manual_count}`")
+            lines.append(f"- **Compliant:** `{fw.compliant_count} / {fw.total_controls}` | **Non-Compliant:** `{fw.non_compliant_count}` | **Partial:** `{fw.partial_count}`")
             lines.append("")
 
-            lines.append("### Detailed Control Evaluations")
-            lines.append("")
-
-            for e in fw.evaluations:
-                status_icon = "✅" if e.status == ControlStatus.COMPLIANT else ("⚠️" if e.status == ControlStatus.PARTIAL else "❌")
-                lines.append(f"#### {status_icon} `{e.control_id}`: {e.title}")
-                lines.append(f"- **Status:** `{e.status.value.upper()}` | **Severity:** `{e.severity.value}` | **Weight:** `{e.weight}`")
-                lines.append(f"- **Description:** {e.description}")
-                lines.append(f"- **Expected:** `{e.expected_condition}`")
-                lines.append(f"- **Actual Observed:** `{e.actual_condition}`")
-                
-                if e.rationale:
-                    lines.append(f"- **Rationale:** {e.rationale}")
-
-                if e.remediation_cmd:
-                    lines.append(f"- **Remediation Command:**\n```bash\n{e.remediation_cmd}\n```")
-                
-                lines.append("")
-
-        # 2. Open-source tools breakdown
+        # 3. Open-source tools breakdown
         if result.tools_reports:
-            lines.append("## 🛠️ Open-Source Security Tools In-Depth Findings")
+            lines.append("## 🛠️ Integrated Open-Source Security Tools Detailed Output")
             lines.append("")
             for t_name, t_rep in result.tools_reports.items():
                 lines.append(f"### 📦 {t_rep.tool_name.upper()} ({t_rep.tool_category})")

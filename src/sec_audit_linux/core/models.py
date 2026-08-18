@@ -133,6 +133,29 @@ class ToolReport:
 
 
 @dataclass
+class UnifiedFinding:
+    """Deduplicated, correlated security finding merging evidence from tools and manual controls."""
+    finding_id: str
+    topic: str
+    title: str
+    severity: Severity
+    description: str
+    sources: List[str] = field(default_factory=list)
+    affected_components: List[str] = field(default_factory=list)
+    actual_value: str = ""
+    expected_value: str = ""
+    remediation_cmd: Optional[str] = None
+    remediation_guide: str = ""
+    related_cves: List[str] = field(default_factory=list)
+    is_manual_check: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        data = asdict(self)
+        data["severity"] = self.severity.value
+        return data
+
+
+@dataclass
 class FrameworkResult:
     """Consolidated assessment outcome for a specific regulatory/security framework."""
     framework_id: str
@@ -157,12 +180,13 @@ class FrameworkResult:
 
 @dataclass
 class AssessmentResult:
-    """Top-level assessment result containing framework results, tool reports, and context."""
+    """Top-level assessment result containing framework results, tool reports, unified findings, and context."""
     assessment_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     system_context: Optional[SystemContext] = None
     overall_score: float = 0.0
     frameworks: Dict[str, FrameworkResult] = field(default_factory=dict)
     tools_reports: Dict[str, ToolReport] = field(default_factory=dict)
+    unified_findings: List[UnifiedFinding] = field(default_factory=list)
     total_evidences: int = 0
     started_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     completed_at: Optional[str] = None
@@ -175,6 +199,7 @@ class AssessmentResult:
             "overall_score": self.overall_score,
             "frameworks": {k: v.to_dict() for k, v in self.frameworks.items()},
             "tools_reports": {k: v.to_dict() for k, v in self.tools_reports.items()},
+            "unified_findings": [f.to_dict() for f in self.unified_findings],
             "total_evidences": self.total_evidences,
             "started_at": self.started_at,
             "completed_at": self.completed_at,

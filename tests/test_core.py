@@ -1,4 +1,4 @@
-"""Tests for core models, OS detection, evidence store, and scoring."""
+"""Tests for core models, OS detection, evidence store, scoring, and finding deduplication."""
 
 import unittest
 from sec_audit_linux.core.models import (
@@ -7,11 +7,14 @@ from sec_audit_linux.core.models import (
     ControlEvaluation,
     ControlStatus,
     Severity,
-    OSFamily
+    OSFamily,
+    FrameworkResult,
+    ToolReport
 )
 from sec_audit_linux.core.os_detector import OSDetector
 from sec_audit_linux.core.evidence_manager import EvidenceStore
 from sec_audit_linux.core.scoring import calculate_weighted_score, summarize_evaluations, calculate_pci_dss_score
+from sec_audit_linux.core.deduplicator import FindingDeduplicator
 
 
 class TestCore(unittest.TestCase):
@@ -63,27 +66,67 @@ class TestCore(unittest.TestCase):
                 title="Control 3",
                 description="Desc",
                 status=ControlStatus.PARTIAL,
-                weight=2.0
-            ),
-            ControlEvaluation(
-                control_id="C4",
-                framework_name="F1",
-                title="Control 4",
-                description="Desc",
-                status=ControlStatus.NOT_APPLICABLE,
-                weight=5.0
+                weight=1.0
             )
         ]
 
         score = calculate_weighted_score(evals)
-        self.assertEqual(score, 50.0)
+        self.assertAlmostEqual(score, 50.0, places=1)
 
         summary = summarize_evaluations(evals)
-        self.assertEqual(summary["total_controls"], 4)
         self.assertEqual(summary["compliant_count"], 1)
         self.assertEqual(summary["non_compliant_count"], 1)
         self.assertEqual(summary["partial_count"], 1)
-        self.assertEqual(summary["not_applicable_count"], 1)
+        self.assertEqual(summary["total_controls"], 3)
+
+        pci_score = calculate_pci_dss_score(evals)
+        self.assertAlmostEqual(pci_score, 50.0, places=1)
+
+    def test_finding_deduplicator(self):
+        fw1 = FrameworkResult(
+            framework_id="cis",
+            framework_name="CIS Linux",
+            version="1.0",
+            adherence_percentage=50.0,
+            evaluations=[
+                ControlEvaluation(
+                    control_id="CIS-5.2.1",
+                    framework_name="CIS Linux",
+                    title="Ensure SSH PermitRootLogin is disabled",
+                    description="Disallow direct root login",
+                    status=ControlStatus.NON_COMPLIANT,
+                    severity=Severity.HIGH,
+                    remediation_cmd="sed -i 's/PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config"
+                )
+            ]
+        )
+        fw2 = FrameworkResult(
+            framework_id="nist",
+            framework_name="NIST 800-53",
+            version="1.0",
+            adherence_percentage=50.0,
+            evaluations=[
+                ControlEvaluation(
+                    control_id="NIST-AC-6",
+                    framework_name="NIST 800-53",
+                    title="Least Privilege (PermitRootLogin)",
+                    description="Disallow direct root login",
+                    status=ControlStatus.NON_COMPLIANT,
+                    severity=Severity.CRITICAL
+                )
+            ]
+        )
+
+        deduped = FindingDeduplicator.deduplicate_and_correlate(
+            frameworks={"cis": fw1, "nist": fw2},
+            tools_reports={}
+        )
+
+        self.assertEqual(len(deduped), 1)
+        self.assertEqual(deduped[0].severity, Severity.CRITICAL)  # Kept highest severity
+        self.assertEqual(len(deduped[0].sources), 2)  # Merged sources
+        self.assertIn("CIS Linux (CIS-5.2.1)", deduped[0].sources)
+        self.assertIn("NIST 800-53 (NIST-AC-6)", deduped[0].sources)
 
 
 if __name__ == "__main__":

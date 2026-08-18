@@ -1,4 +1,4 @@
-"""Audit Orchestrator and Assessment Engine."""
+"""Audit Orchestrator and Assessment Engine with Tool Ingestion and Finding Deduplication."""
 
 import time
 from datetime import datetime, timezone
@@ -12,6 +12,7 @@ from sec_audit_linux.core.models import (
 )
 from sec_audit_linux.core.os_detector import OSDetector
 from sec_audit_linux.core.evidence_manager import EvidenceStore
+from sec_audit_linux.core.deduplicator import FindingDeduplicator
 
 
 class AuditEngine:
@@ -61,7 +62,8 @@ class AuditEngine:
         2. Executes external open-source security tools and generates standalone ToolReports.
         3. Ingests tool outputs into the EvidenceStore.
         4. Evaluates compliance frameworks.
-        5. Calculates metrics and returns AssessmentResult.
+        5. Deduplicates findings across tools and manual frameworks.
+        6. Calculates metrics and returns AssessmentResult.
         """
         start_time = time.time()
         started_at = datetime.now(timezone.utc).isoformat()
@@ -101,7 +103,7 @@ class AuditEngine:
                     # Ingest tool evidences for framework correlation
                     evs = tool.extract_evidences(report)
                     self.evidence_store.add_records(evs)
-                except Exception as e:
+                except Exception:
                     pass
 
         all_evidences = self.evidence_store.get_all_records()
@@ -138,7 +140,13 @@ class AuditEngine:
                     evaluations=[err_eval]
                 )
 
-        # 4. Compute Global Overall Score
+        # 4. Deduplicate and Correlate Unified Findings
+        unified_findings = FindingDeduplicator.deduplicate_and_correlate(
+            frameworks=framework_results,
+            tools_reports=tools_reports
+        )
+
+        # 5. Compute Global Overall Score
         overall_score = 0.0
         if framework_results:
             scores = [f.adherence_percentage for f in framework_results.values()]
@@ -152,6 +160,7 @@ class AuditEngine:
             overall_score=overall_score,
             frameworks=framework_results,
             tools_reports=tools_reports,
+            unified_findings=unified_findings,
             total_evidences=len(all_evidences),
             started_at=started_at,
             completed_at=completed_at,
